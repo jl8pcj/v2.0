@@ -1,4 +1,4 @@
-# v2.0　switch2に対応
+# v2.1　switch2に対応
 HORIコンに偽装して認識させる。<BR>
 <BR>
 1.BOOTを押しながらUSBをPCに接続<BR>
