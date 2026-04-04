@@ -24,10 +24,10 @@
 #define PIN_ZR     12
 
 // Piezo ADC
-#define PIEZO_L    26   // L
-#define PIEZO_HR   27   // HAT右
-#define PIEZO_Y    28   // Y
-#define PIEZO_R    29   // R
+#define PIEZO_L    26
+#define PIEZO_HR   27
+#define PIEZO_Y    28
+#define PIEZO_R    29
 
 // =====================================================
 // HORIPAD Button Bits
@@ -108,6 +108,16 @@ GamepadReport gp_report = {0,8,128,128,128,128,0};
 int piezoBaseline[4];
 int piezoThreshold[4];
 
+// Piezoごとのデバウンス時間（ms）
+uint32_t piezoDebounce[4] = {
+  40,  // L → 軽打対応で短め
+  50,  // HR
+  40,  // Y → 軽打対応
+  70   // R → 誤反応しやすいので長め
+};
+
+uint32_t lastHit[4] = {0,0,0,0};
+
 bool calibrated=false;
 uint32_t calibStart=0;
 
@@ -157,8 +167,13 @@ void calibratePiezo(){
 
   for(int i=0;i<4;i++){
     piezoBaseline[i]=sum[i]/200;
-    piezoThreshold[i]=piezoBaseline[i]+120;
   }
+
+  // --- Piezoごとの感度調整 ---
+  piezoThreshold[0] = piezoBaseline[0] + 80;   // L → 軽打対応
+  piezoThreshold[1] = piezoBaseline[1] + 90;   // HR
+  piezoThreshold[2] = piezoBaseline[2] + 80;   // Y → 軽打対応
+  piezoThreshold[3] = piezoBaseline[3] + 120;  // R → 誤反応しやすいので高め
 }
 
 // =====================================================
@@ -180,7 +195,6 @@ void setup(){
 
   analogReadResolution(12);
 
-  // ★USB先に開始（Switch必須）
   usb_gamepad.setReportDescriptor(
     gamepad_report_desc,
     sizeof(gamepad_report_desc)
@@ -229,18 +243,49 @@ void loop(){
   setButton(BTN_ZR,!digitalRead(PIN_ZR));
 
   // ---- Piezo ADC ----
-  int v0=analogRead(PIEZO_L);
-  int v1=analogRead(PIEZO_HR);
-  int v2=analogRead(PIEZO_Y);
-  int v3=analogRead(PIEZO_R);
+  int raw[4];
+  raw[0] = analogRead(PIEZO_L);
+  raw[1] = analogRead(PIEZO_HR);
+  raw[2] = analogRead(PIEZO_Y);
+  raw[3] = analogRead(PIEZO_R);
 
-  setButton(BTN_L, v0>piezoThreshold[0]);
+  // 最大値方式で誤反応防止
+  int maxIndex = -1;
+  int maxValue = 0;
 
-  if(v1>piezoThreshold[1])
-    gp_report.hat=2;
+  for (int i = 0; i < 4; i++) {
+    if (raw[i] > piezoThreshold[i] && raw[i] > maxValue) {
+      maxValue = raw[i];
+      maxIndex = i;
+    }
+  }
 
-  setButton(BTN_Y, v2>piezoThreshold[2]);
-  setButton(BTN_R, v3>piezoThreshold[3]);
+  // Piezo ボタンは一旦すべて OFF
+  setButton(BTN_L, false);
+  setButton(BTN_Y, false);
+  setButton(BTN_R, false);
+
+  // ---- Piezoごとのデバウンス ----
+  if (maxIndex >= 0) {
+    uint32_t now = millis();
+
+    if (now - lastHit[maxIndex] > piezoDebounce[maxIndex]) {
+      lastHit[maxIndex] = now;
+
+      if (maxIndex == 0) {
+        setButton(BTN_L, true);
+      }
+      else if (maxIndex == 1) {
+        gp_report.hat = 2;  // 右
+      }
+      else if (maxIndex == 2) {
+        setButton(BTN_Y, true);
+      }
+      else if (maxIndex == 3) {
+        setButton(BTN_R, true);
+      }
+    }
+  }
 
   // send
   if(usb_gamepad.ready()){
